@@ -4,7 +4,33 @@ import itertools
 import awkward as ak
 import numpy as np
 import scipy.stats
+class Module(object):
+    """
+    Detection module.
 
+    Attributes:
+        pos: np.ndarray
+            Module position (x, y, z)
+        noise_rate: float
+            Noise rate in 1/ns
+        efficiency: float
+            Module efficiency (0, 1]
+        self.key: collection
+            Module identifier
+    """
+
+    def __init__(self, pos, key, noise_rate=1, efficiency=0.2):
+        """Initialize a module."""
+        self.pos = pos
+        self.noise_rate = noise_rate
+        self.efficiency = efficiency
+        self.key = key
+
+    def __repr__(self):
+        """Return string representation."""
+        return repr(
+            f"Module {self.key}, {self.pos} [m], {self.noise_rate} [Hz], {self.efficiency}"
+        )
 
 class Module(object):
     """
@@ -75,6 +101,83 @@ class Detector(object):
     @property
     def outer_cylinder(self):
         return self._outer_cylinder
+
+def to_f2k(d:Detector, fname="geo_f2k.tmp", serial_nos=[], mac_ids=[])->NoneType:
+    """
+    Write detector corrdinates into f2k format.
+
+    Parameters
+        d: Detector
+            Detector object to write out
+        fname: str
+            name of f2k file
+        serial_nos: list{str}
+            serial numbers for the optical modules
+        mac_ids: list{str}
+            MAC (I don't think this is actually what this is called) IDs for the DOMs
+    """
+    # Make sure serial numbers are compatible with the list of OMs
+    if serial_nos:
+        if len(serial_nos)!=len(d.modules):
+            raise ValueError("serial numbers incompatible with modules")
+    # Make up random place holders
+    else:
+        import string, random
+        serial_nos = ["0x"+"".join(random.choices(string.ascii_lowercase + string.digits, k=12)) 
+                for _ in range(len(d.modules))
+                ]
+    # Make sure serial numbers are compatible with the list of OMs
+    if mac_ids:
+        if len(mac_ids)!=len(d.modules):
+            raise ValueError("mac id list incompatible with modules")
+    # Make up random place holders
+    else:
+        import string, random
+        mac_ids = [''.join(random.choices(string.ascii_uppercase + string.digits, k=8)) 
+                for _ in range(len(d.modules))
+                ]
+        keys = [m.key for m in d.modules]
+    with open(fname, "w") as f2k_out:
+        for mac_id, serial_no, pos, key in zip(mac_ids, serial_nos, d.module_coords, keys):
+            line = f"{mac_id}\t{serial_no}\t{pos[0]}\t{pos[1]}\t{pos[2]}"
+            if hasattr(key, "__iter__"):
+                for x in key:
+                    line += f"\t{x}"
+            else:
+                line += f"\t{key}"
+            line += "\n"
+            f2k_out.write(line)
+
+def from_f2k(fname:str, efficiency=0.2, noise_rate=1)->Detector:
+    """
+    Create a Detector object from an f2k geometry file
+
+    Parameters
+        fname: str
+            Name of the f2k_file to create Detector from
+        self.key: collection
+            Module identifier
+        noise_rate: float
+            Noise rate in 1/ns
+        efficiency: float
+            Module efficiency (0, 1]
+    Returns
+        d: Detector
+    """
+    pos = []
+    keys = []
+    with open(fname) as f2k_in:
+        for line in f2k_in.readlines():
+            line = line.strip("\n").split("\t")
+            pos.append(np.array([float(line[2]), float(line[3]), float(line[4])]))
+            keys.append((int(line[5]), int(line[6])))
+    if not hasattr(efficiency, "__iter__"):
+        efficiency = np.full(len(pos), efficiency)
+    if not hasattr(noise_rate, "__iter__"):
+        noise_rate = np.full(len(pos), noise_rate)
+    modules = [Module(p, k, efficiency=e, noise_rate=nr) for p,k,e,nr  in zip(pos, keys, efficiency, noise_rate)]
+    d = Detector(modules)
+    return d
 
 
 def make_line(x, y, n_z, dist_z, rng, baseline_noise_rate, line_id, efficiency=0.2):
